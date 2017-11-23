@@ -1,6 +1,6 @@
 {
   "name": "liquidpledging",
-  "version": "0.0.10",
+  "version": "0.0.12",
   "description": "Liquid Pledging Smart Contract",
   "main": "index.js",
   "directories": {
@@ -44,7 +44,7 @@
     "lerna": "^2.2.0",
     "random-bytes": "^1.0.0",
     "mocha": "^3.5.0",
-    "solcpiler": "0.0.7",
+    "solcpiler": "git://github.com/perissology/solcpiler.git#1347c60f4a13191016d68b188e5813288e594a28",
     "web3": "1.0.0-beta.24"
   },
   "homepage": "https://github.com/Giveth/liquidpledging#readme",
