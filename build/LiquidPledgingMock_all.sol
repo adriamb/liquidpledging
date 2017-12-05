@@ -165,6 +165,148 @@ contract Owned {
     }
 } 
 
+//File: node_modules/giveth-common-contracts/contracts/ERC20.sol
+pragma solidity ^0.4.15;
+
+
+/**
+ * @title ERC20
+ * @dev A standard interface for tokens.
+ * @dev https://github.com/ethereum/EIPs/blob/master/EIPS/eip-20-token-standard.md
+ */
+contract ERC20 {
+  
+    /// @dev Returns the total token supply
+    function totalSupply() public constant returns (uint256 supply);
+
+    /// @dev Returns the account balance of the account with address _owner
+    function balanceOf(address _owner) public constant returns (uint256 balance);
+
+    /// @dev Transfers _value number of tokens to address _to
+    function transfer(address _to, uint256 _value) public returns (bool success);
+
+    /// @dev Transfers _value number of tokens from address _from to address _to
+    function transferFrom(address _from, address _to, uint256 _value) public returns (bool success);
+
+    /// @dev Allows _spender to withdraw from the msg.sender's account up to the _value amount
+    function approve(address _spender, uint256 _value) public returns (bool success);
+
+    /// @dev Returns the amount which _spender is still allowed to withdraw from _owner
+    function allowance(address _owner, address _spender) public constant returns (uint256 remaining);
+
+    event Transfer(address indexed _from, address indexed _to, uint256 _value);
+    event Approval(address indexed _owner, address indexed _spender, uint256 _value);
+
+}
+
+//File: node_modules/giveth-common-contracts/contracts/Escapable.sol
+pragma solidity ^0.4.15;
+/*
+    Copyright 2016, Jordi Baylina
+    Contributor: Adrià Massanet <adria@codecontext.io>
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
+
+
+
+
+/// @dev `Escapable` is a base level contract built off of the `Owned`
+///  contract; it creates an escape hatch function that can be called in an
+///  emergency that will allow designated addresses to send any ether or tokens
+///  held in the contract to an `escapeHatchDestination` as long as they were
+///  not blacklisted
+contract Escapable is Owned {
+    address public escapeHatchCaller;
+    address public escapeHatchDestination;
+    mapping (address=>bool) private escapeBlacklist; // Token contract addresses
+
+    /// @notice The Constructor assigns the `escapeHatchDestination` and the
+    ///  `escapeHatchCaller`
+    /// @param _escapeHatchCaller The address of a trusted account or contract
+    ///  to call `escapeHatch()` to send the ether in this contract to the
+    ///  `escapeHatchDestination` it would be ideal that `escapeHatchCaller`
+    ///  cannot move funds out of `escapeHatchDestination`
+    /// @param _escapeHatchDestination The address of a safe location (usu a
+    ///  Multisig) to send the ether held in this contract; if a neutral address
+    ///  is required, the WHG Multisig is an option:
+    ///  0x8Ff920020c8AD673661c8117f2855C384758C572 
+    function Escapable(address _escapeHatchCaller, address _escapeHatchDestination) public {
+        escapeHatchCaller = _escapeHatchCaller;
+        escapeHatchDestination = _escapeHatchDestination;
+    }
+
+    /// @dev The addresses preassigned as `escapeHatchCaller` or `owner`
+    ///  are the only addresses that can call a function with this modifier
+    modifier onlyEscapeHatchCallerOrOwner {
+        require ((msg.sender == escapeHatchCaller)||(msg.sender == owner));
+        _;
+    }
+
+    /// @notice Creates the blacklist of tokens that are not able to be taken
+    ///  out of the contract; can only be done at the deployment, and the logic
+    ///  to add to the blacklist will be in the constructor of a child contract
+    /// @param _token the token contract address that is to be blacklisted 
+    function blacklistEscapeToken(address _token) internal {
+        escapeBlacklist[_token] = true;
+        EscapeHatchBlackistedToken(_token);
+    }
+
+    /// @notice Checks to see if `_token` is in the blacklist of tokens
+    /// @param _token the token address being queried
+    /// @return False if `_token` is in the blacklist and can't be taken out of
+    ///  the contract via the `escapeHatch()`
+    function isTokenEscapable(address _token) constant public returns (bool) {
+        return !escapeBlacklist[_token];
+    }
+
+    /// @notice The `escapeHatch()` should only be called as a last resort if a
+    /// security issue is uncovered or something unexpected happened
+    /// @param _token to transfer, use 0x0 for ether
+    function escapeHatch(address _token) public onlyEscapeHatchCallerOrOwner {   
+        require(escapeBlacklist[_token]==false);
+
+        uint256 balance;
+
+        /// @dev Logic for ether
+        if (_token == 0x0) {
+            balance = this.balance;
+            escapeHatchDestination.transfer(balance);
+            EscapeHatchCalled(_token, balance);
+            return;
+        }
+        /// @dev Logic for tokens
+        ERC20 token = ERC20(_token);
+        balance = token.balanceOf(this);
+        require(token.transfer(escapeHatchDestination, balance));
+        EscapeHatchCalled(_token, balance);
+    }
+
+    /// @notice Changes the address assigned to call `escapeHatch()`
+    /// @param _newEscapeHatchCaller The address of a trusted account or
+    ///  contract to call `escapeHatch()` to send the value in this contract to
+    ///  the `escapeHatchDestination`; it would be ideal that `escapeHatchCaller`
+    ///  cannot move funds out of `escapeHatchDestination`
+    function changeHatchEscapeCaller(address _newEscapeHatchCaller) public onlyEscapeHatchCallerOrOwner {
+        escapeHatchCaller = _newEscapeHatchCaller;
+    }
+
+    event EscapeHatchBlackistedToken(address token);
+    event EscapeHatchCalled(address token, uint amount);
+}
+
 //File: contracts/LiquidPledgingBase.sol
 pragma solidity ^0.4.11;
 /*
@@ -200,7 +342,7 @@ interface LPVault {
 /// @dev `LiquidPledgingBase` is the base level contract used to carry out
 ///  liquidPledging's most basic functions, mostly handling and searching the
 ///  data structures
-contract LiquidPledgingBase is Owned {
+contract LiquidPledgingBase is Escapable {
 
     // Limits inserted to prevent large loops that could prevent canceling
     uint constant MAX_DELEGATES = 20;
@@ -267,7 +409,11 @@ contract LiquidPledgingBase is Owned {
 
     /// @notice The Constructor creates `LiquidPledgingBase` on the blockchain
     /// @param _vault The vault where the ETH backing the pledges is stored
-    function LiquidPledgingBase(address _vault) {
+    function LiquidPledgingBase(
+        address _vault,
+        address _escapeHatchCaller,
+        address _escapeHatchDestination
+    ) Escapable(_escapeHatchCaller, _escapeHatchDestination) public {
         admins.length = 1; // we reserve the 0 admin
         pledges.length = 1; // we reserve the 0 pledge
         vault = LPVault(_vault); // Assigns the specified vault
@@ -506,14 +652,14 @@ contract LiquidPledgingBase is Owned {
         uint64 oldPledge,
         PledgeState pledgeState
     ) {
-        Pledge storage n = findPledge(idPledge);
-        amount = n.amount;
-        owner = n.owner;
-        nDelegates = uint64(n.delegationChain.length);
-        intendedProject = n.intendedProject;
-        commitTime = n.commitTime;
-        oldPledge = n.oldPledge;
-        pledgeState = n.pledgeState;
+        Pledge storage p = findPledge(idPledge);
+        amount = p.amount;
+        owner = p.owner;
+        nDelegates = uint64(p.delegationChain.length);
+        intendedProject = p.intendedProject;
+        commitTime = p.commitTime;
+        oldPledge = p.oldPledge;
+        pledgeState = p.pledgeState;
     }
 
     /// @notice Getter to find Delegate w/ the Pledge ID & the Delegate index
@@ -524,8 +670,8 @@ contract LiquidPledgingBase is Owned {
         address addr,
         string name
     ) {
-        Pledge storage n = findPledge(idPledge);
-        idDelegate = n.delegationChain[idxDelegate - 1];
+        Pledge storage p = findPledge(idPledge);
+        idDelegate = p.delegationChain[idxDelegate - 1];
         PledgeAdmin storage delegate = findAdmin(idDelegate);
         addr = delegate.addr;
         name = delegate.name;
@@ -632,39 +778,39 @@ contract LiquidPledgingBase is Owned {
 
     /// @notice A getter that searches the delegationChain for the level of
     ///  authority a specific delegate has within a Pledge
-    /// @param n The Pledge that will be searched
+    /// @param p The Pledge that will be searched
     /// @param idDelegate The specified delegate that's searched for
     /// @return If the delegate chain contains the delegate with the
     ///  `admins` array index `idDelegate` this returns that delegates
     ///  corresponding index in the delegationChain. Otherwise it returns
     ///  the NOTFOUND constant
-    function getDelegateIdx(Pledge n, uint64 idDelegate) internal returns(uint64) {
-        for (uint i=0; i < n.delegationChain.length; i++) {
-            if (n.delegationChain[i] == idDelegate) return uint64(i);
+    function getDelegateIdx(Pledge p, uint64 idDelegate) internal returns(uint64) {
+        for (uint i=0; i < p.delegationChain.length; i++) {
+            if (p.delegationChain[i] == idDelegate) return uint64(i);
         }
         return NOTFOUND;
     }
 
     /// @notice A getter to find how many old "parent" pledges a specific Pledge
     ///  had using a self-referential loop
-    /// @param n The Pledge being queried
+    /// @param p The Pledge being queried
     /// @return The number of old "parent" pledges a specific Pledge had
-    function getPledgeLevel(Pledge n) internal returns(uint) {
-        if (n.oldPledge == 0) return 0;
-        Pledge storage oldN = findPledge(n.oldPledge);
+    function getPledgeLevel(Pledge p) internal returns(uint) {
+        if (p.oldPledge == 0) return 0;
+        Pledge storage oldN = findPledge(p.oldPledge);
         return getPledgeLevel(oldN) + 1; // a loop lookup
     }
 
     /// @notice A getter to find the longest commitTime out of the owner and all
     ///  the delegates for a specified pledge
-    /// @param n The Pledge being queried
+    /// @param p The Pledge being queried
     /// @return The maximum commitTime out of the owner and all the delegates
-    function maxCommitTime(Pledge n) internal returns(uint commitTime) {
-        PledgeAdmin storage m = findAdmin(n.owner);
+    function maxCommitTime(Pledge p) internal returns(uint commitTime) {
+        PledgeAdmin storage m = findAdmin(p.owner);
         commitTime = m.commitTime; // start with the owner's commitTime
 
-        for (uint i=0; i<n.delegationChain.length; i++) {
-            m = findAdmin(n.delegationChain[i]);
+        for (uint i=0; i<p.delegationChain.length; i++) {
+            m = findAdmin(p.delegationChain[i]);
 
             // If a delegate's commitTime is longer, make it the new commitTime
             if (m.commitTime > commitTime) commitTime = m.commitTime;
@@ -679,7 +825,7 @@ contract LiquidPledgingBase is Owned {
         assert(m.adminType == PledgeAdminType.Project);
         if (m.parentProject == 0) return(1);
         PledgeAdmin storage parentNM = findAdmin(m.parentProject);
-        return getProjectLevel(parentNM);
+        return getProjectLevel(parentNM) + 1;
     }
 
     /// @notice A getter to find if a specified Project has been canceled
@@ -700,15 +846,15 @@ contract LiquidPledgingBase is Owned {
     function getOldestPledgeNotCanceled(uint64 idPledge
         ) internal constant returns(uint64) {
         if (idPledge == 0) return 0;
-        Pledge storage n = findPledge(idPledge);
-        PledgeAdmin storage admin = findAdmin(n.owner);
+        Pledge storage p = findPledge(idPledge);
+        PledgeAdmin storage admin = findAdmin(p.owner);
         if (admin.adminType == PledgeAdminType.Giver) return idPledge;
 
         assert(admin.adminType == PledgeAdminType.Project);
 
-        if (!isProjectCanceled(n.owner)) return idPledge;
+        if (!isProjectCanceled(p.owner)) return idPledge;
 
-        return getOldestPledgeNotCanceled(n.oldPledge);
+        return getOldestPledgeNotCanceled(p.oldPledge);
     }
 
     /// @notice A check to see if the msg.sender is the owner or the
@@ -800,7 +946,12 @@ contract LiquidPledging is LiquidPledgingBase {
     /// @dev This constructor  also calls the constructor 
     ///  for `LiquidPledgingBase`
     /// @param _vault The vault where ETH backing this pledge is stored
-    function LiquidPledging(address _vault) LiquidPledgingBase(_vault) {
+    function LiquidPledging(
+        address _vault,
+        address _escapeHatchCaller,
+        address _escapeHatchDestination
+    ) LiquidPledgingBase(_vault, _escapeHatchCaller, _escapeHatchDestination) {
+
     }
 
     /// @notice This is how value enters into the system which creates pledges;
@@ -866,15 +1017,15 @@ contract LiquidPledging is LiquidPledgingBase {
 
         idPledge = normalizePledge(idPledge);
 
-        Pledge storage n = findPledge(idPledge);
+        Pledge storage p = findPledge(idPledge);
         PledgeAdmin storage receiver = findAdmin(idReceiver);
         PledgeAdmin storage sender = findAdmin(idSender);
 
         checkAdminOwner(sender);
-        require(n.pledgeState == PledgeState.Pledged);
+        require(p.pledgeState == PledgeState.Pledged);
 
         // If the sender is the owner
-        if (n.owner == idSender) {
+        if (p.owner == idSender) {
             if (receiver.adminType == PledgeAdminType.Giver) {
                 transferOwnershipToGiver(idPledge, amount, idReceiver);
             } else if (receiver.adminType == PledgeAdminType.Project) {
@@ -883,7 +1034,7 @@ contract LiquidPledging is LiquidPledgingBase {
                 idPledge = undelegate(
                     idPledge,
                     amount,
-                    n.delegationChain.length
+                    p.delegationChain.length
                 );
                 appendDelegate(idPledge, amount, idReceiver);
             } else {
@@ -893,28 +1044,28 @@ contract LiquidPledging is LiquidPledgingBase {
         }
 
         // If the sender is a delegate
-        uint senderDIdx = getDelegateIdx(n, idSender);
+        uint senderDIdx = getDelegateIdx(p, idSender);
         if (senderDIdx != NOTFOUND) {
 
             // If the receiver is another giver
             if (receiver.adminType == PledgeAdminType.Giver) {
                 // Only accept to change to the original giver to
                 // remove all delegates
-                assert(n.owner == idReceiver);
-                undelegate(idPledge, amount, n.delegationChain.length);
+                assert(p.owner == idReceiver);
+                undelegate(idPledge, amount, p.delegationChain.length);
                 return;
             }
 
             // If the receiver is another delegate
             if (receiver.adminType == PledgeAdminType.Delegate) {
-                uint receiverDIdx = getDelegateIdx(n, idReceiver);
+                uint receiverDIdx = getDelegateIdx(p, idReceiver);
 
                 // If the receiver is not in the delegate list
                 if (receiverDIdx == NOTFOUND) {
                     idPledge = undelegate(
                         idPledge,
                         amount,
-                        n.delegationChain.length - senderDIdx - 1
+                        p.delegationChain.length - senderDIdx - 1
                     );
                     appendDelegate(idPledge, amount, idReceiver);
 
@@ -926,7 +1077,7 @@ contract LiquidPledging is LiquidPledgingBase {
                     idPledge = undelegate(
                         idPledge,
                         amount,
-                        n.delegationChain.length - senderDIdx - 1
+                        p.delegationChain.length - senderDIdx - 1
                     );
                     appendDelegate(idPledge, amount, idReceiver);
 
@@ -940,7 +1091,7 @@ contract LiquidPledging is LiquidPledgingBase {
                     undelegate(
                         idPledge,
                         amount,
-                        n.delegationChain.length - receiverDIdx - 1
+                        p.delegationChain.length - receiverDIdx - 1
                     );
                 }
                 return;
@@ -952,7 +1103,7 @@ contract LiquidPledging is LiquidPledgingBase {
                 idPledge = undelegate(
                     idPledge,
                     amount,
-                    n.delegationChain.length - senderDIdx - 1
+                    p.delegationChain.length - senderDIdx - 1
                 );
                 proposeAssignProject(idPledge, amount, idReceiver);
                 return;
@@ -969,20 +1120,20 @@ contract LiquidPledging is LiquidPledgingBase {
 
         idPledge = normalizePledge(idPledge);
 
-        Pledge storage n = findPledge(idPledge);
+        Pledge storage p = findPledge(idPledge);
 
-        require(n.pledgeState == PledgeState.Pledged);
+        require(p.pledgeState == PledgeState.Pledged);
 
-        PledgeAdmin storage owner = findAdmin(n.owner);
+        PledgeAdmin storage owner = findAdmin(p.owner);
 
         checkAdminOwner(owner);
 
         uint64 idNewPledge = findOrCreatePledge(
-            n.owner,
-            n.delegationChain,
+            p.owner,
+            p.delegationChain,
             0,
             0,
-            n.oldPledge,
+            p.oldPledge,
             PledgeState.Paying
         );
 
@@ -995,16 +1146,16 @@ contract LiquidPledging is LiquidPledgingBase {
     /// @param idPledge Id of the pledge that wants to be withdrawn.
     /// @param amount Quantity of Ether that wants to be withdrawn.
     function confirmPayment(uint64 idPledge, uint amount) onlyVault {
-        Pledge storage n = findPledge(idPledge);
+        Pledge storage p = findPledge(idPledge);
 
-        require(n.pledgeState == PledgeState.Paying);
+        require(p.pledgeState == PledgeState.Paying);
 
         uint64 idNewPledge = findOrCreatePledge(
-            n.owner,
-            n.delegationChain,
+            p.owner,
+            p.delegationChain,
             0,
             0,
-            n.oldPledge,
+            p.oldPledge,
             PledgeState.Paid
         );
 
@@ -1015,17 +1166,17 @@ contract LiquidPledging is LiquidPledgingBase {
     /// @param idPledge Id of the pledge that wants to be canceled for withdraw.
     /// @param amount Quantity of Ether that wants to be rolled back.
     function cancelPayment(uint64 idPledge, uint amount) onlyVault {
-        Pledge storage n = findPledge(idPledge);
+        Pledge storage p = findPledge(idPledge);
 
-        require(n.pledgeState == PledgeState.Paying); //TODO change to revert
+        require(p.pledgeState == PledgeState.Paying); //TODO change to revert
 
         // When a payment is canceled, never is assigned to a project.
         uint64 oldPledge = findOrCreatePledge(
-            n.owner,
-            n.delegationChain,
+            p.owner,
+            p.delegationChain,
             0,
             0,
-            n.oldPledge,
+            p.oldPledge,
             PledgeState.Pledged
         );
 
@@ -1050,13 +1201,13 @@ contract LiquidPledging is LiquidPledgingBase {
     function cancelPledge(uint64 idPledge, uint amount) {
         idPledge = normalizePledge(idPledge);
 
-        Pledge storage n = findPledge(idPledge);
-        require(n.oldPledge != 0);
+        Pledge storage p = findPledge(idPledge);
+        require(p.oldPledge != 0);
 
-        PledgeAdmin storage m = findAdmin(n.owner);
+        PledgeAdmin storage m = findAdmin(p.owner);
         checkAdminOwner(m);
 
-        uint64 oldPledge = getOldestPledgeNotCanceled(n.oldPledge);
+        uint64 oldPledge = getOldestPledgeNotCanceled(p.oldPledge);
         doTransfer(idPledge, oldPledge, amount);
     }
 
@@ -1158,19 +1309,19 @@ contract LiquidPledging is LiquidPledgingBase {
         uint amount,
         uint64 idReceiver
     ) internal {
-        Pledge storage n = findPledge(idPledge);
+        Pledge storage p = findPledge(idPledge);
 
         // Ensure that the pledge is not already at max pledge depth
         // and the project has not been canceled
-        require(getPledgeLevel(n) < MAX_INTERPROJECT_LEVEL);
+        require(getPledgeLevel(p) < MAX_INTERPROJECT_LEVEL);
         require(!isProjectCanceled(idReceiver));
 
         uint64 oldPledge = findOrCreatePledge(
-            n.owner,
-            n.delegationChain,
+            p.owner,
+            p.delegationChain,
             0,
             0,
-            n.oldPledge,
+            p.oldPledge,
             PledgeState.Pledged
         );
         uint64 toPledge = findOrCreatePledge(
@@ -1217,25 +1368,25 @@ contract LiquidPledging is LiquidPledgingBase {
         uint amount,
         uint64 idReceiver
     ) internal {
-        Pledge storage n = findPledge(idPledge);
+        Pledge storage p = findPledge(idPledge);
 
-        require(n.delegationChain.length < MAX_DELEGATES);
+        require(p.delegationChain.length < MAX_DELEGATES);
         uint64[] memory newDelegationChain = new uint64[](
-            n.delegationChain.length + 1
+            p.delegationChain.length + 1
         );
-        for (uint i = 0; i<n.delegationChain.length; i++) {
-            newDelegationChain[i] = n.delegationChain[i];
+        for (uint i = 0; i<p.delegationChain.length; i++) {
+            newDelegationChain[i] = p.delegationChain[i];
         }
 
         // Make the last item in the array the idReceiver
-        newDelegationChain[n.delegationChain.length] = idReceiver;
+        newDelegationChain[p.delegationChain.length] = idReceiver;
 
         uint64 toPledge = findOrCreatePledge(
-            n.owner,
+            p.owner,
             newDelegationChain,
             0,
             0,
-            n.oldPledge,
+            p.oldPledge,
             PledgeState.Pledged
         );
         doTransfer(idPledge, toPledge, amount);
@@ -1251,19 +1402,19 @@ contract LiquidPledging is LiquidPledgingBase {
         uint amount,
         uint q
     ) internal returns (uint64){
-        Pledge storage n = findPledge(idPledge);
+        Pledge storage p = findPledge(idPledge);
         uint64[] memory newDelegationChain = new uint64[](
-            n.delegationChain.length - q
+            p.delegationChain.length - q
         );
-        for (uint i=0; i<n.delegationChain.length - q; i++) {
-            newDelegationChain[i] = n.delegationChain[i];
+        for (uint i=0; i<p.delegationChain.length - q; i++) {
+            newDelegationChain[i] = p.delegationChain[i];
         }
         uint64 toPledge = findOrCreatePledge(
-            n.owner,
+            p.owner,
             newDelegationChain,
             0,
             0,
-            n.oldPledge,
+            p.oldPledge,
             PledgeState.Pledged
         );
         doTransfer(idPledge, toPledge, amount);
@@ -1283,17 +1434,17 @@ contract LiquidPledging is LiquidPledgingBase {
         uint amount,
         uint64 idReceiver
     ) internal {
-        Pledge storage n = findPledge(idPledge);
+        Pledge storage p = findPledge(idPledge);
 
-        require(getPledgeLevel(n) < MAX_SUBPROJECT_LEVEL);
+        require(getPledgeLevel(p) < MAX_INTERPROJECT_LEVEL);
         require(!isProjectCanceled(idReceiver));
 
         uint64 toPledge = findOrCreatePledge(
-            n.owner,
-            n.delegationChain,
+            p.owner,
+            p.delegationChain,
             idReceiver,
-            uint64(getTime() + maxCommitTime(n)),
-            n.oldPledge,
+            uint64(getTime() + maxCommitTime(p)),
+            p.oldPledge,
             PledgeState.Pledged
         );
         doTransfer(idPledge, toPledge, amount);
@@ -1341,40 +1492,40 @@ contract LiquidPledging is LiquidPledgingBase {
     /// @param idPledge This is the id of the pledge that will be normalized
     function normalizePledge(uint64 idPledge) returns(uint64) {
 
-        Pledge storage n = findPledge(idPledge);
+        Pledge storage p = findPledge(idPledge);
 
         // Check to make sure this pledge hasn't already been used 
         // or is in the process of being used
-        if (n.pledgeState != PledgeState.Pledged) {
+        if (p.pledgeState != PledgeState.Pledged) {
             return idPledge;
         }
 
         // First send to a project if it's proposed and committed
-        if ((n.intendedProject > 0) && ( getTime() > n.commitTime)) {
+        if ((p.intendedProject > 0) && ( getTime() > p.commitTime)) {
             uint64 oldPledge = findOrCreatePledge(
-                n.owner,
-                n.delegationChain,
+                p.owner,
+                p.delegationChain,
                 0,
                 0,
-                n.oldPledge,
+                p.oldPledge,
                 PledgeState.Pledged
             );
             uint64 toPledge = findOrCreatePledge(
-                n.intendedProject,
+                p.intendedProject,
                 new uint64[](0),
                 0,
                 0,
                 oldPledge,
                 PledgeState.Pledged
             );
-            doTransfer(idPledge, toPledge, n.amount);
+            doTransfer(idPledge, toPledge, p.amount);
             idPledge = toPledge;
-            n = findPledge(idPledge);
+            p = findPledge(idPledge);
         }
 
-        toPledge = getOldestPledgeNotCanceled(idPledge);// TODO toPledge is pledge defined
+        toPledge = getOldestPledgeNotCanceled(idPledge);
         if (toPledge != idPledge) {
-            doTransfer(idPledge, toPledge, n.amount);
+            doTransfer(idPledge, toPledge, p.amount);
         }
 
         return toPledge;
@@ -1458,12 +1609,12 @@ contract LiquidPledging is LiquidPledgingBase {
         // or transferring context
         uint64 offset = idPledge == fromPledge ? 0 : 256;
         allowedAmount = amount;
-        Pledge storage n = findPledge(idPledge);
+        Pledge storage p = findPledge(idPledge);
 
         // Always call the plugin on the owner
         allowedAmount = callPlugin(
             before,
-            n.owner,
+            p.owner,
             fromPledge,
             toPledge,
             offset,
@@ -1471,10 +1622,10 @@ contract LiquidPledging is LiquidPledgingBase {
         );
 
         // Apply call plugin to all delegates
-        for (uint64 i=0; i<n.delegationChain.length; i++) {
+        for (uint64 i=0; i<p.delegationChain.length; i++) {
             allowedAmount = callPlugin(
                 before,
-                n.delegationChain[i],
+                p.delegationChain[i],
                 fromPledge,
                 toPledge,
                 offset + i+1,
@@ -1485,10 +1636,10 @@ contract LiquidPledging is LiquidPledgingBase {
         // If there is an intended project also call the plugin in
         // either a transferring or receiving context based on offset
         // on the intended project
-        if (n.intendedProject > 0) {
+        if (p.intendedProject > 0) {
             allowedAmount = callPlugin(
                 before,
-                n.intendedProject,
+                p.intendedProject,
                 fromPledge,
                 toPledge,
                 offset + 255,
@@ -1501,11 +1652,11 @@ contract LiquidPledging is LiquidPledgingBase {
     /// @notice `callPlugins` calls `callPluginsPledge` once for the transfer
     ///  context and once for the receiving context. The aggregated 
     ///  allowed amount is then returned.
-    /// @param before This toggle determines whether the plugin call is occuring
+    /// @param before This toggle determines whether the plugin call is occurring
     ///  before or after a transfer.
-    /// @param fromPledge This is the Id from which value is being transfered.
-    /// @param toPledge This is the Id that value is being transfered to.
-    /// @param amount The amount of value that is being transfered.    
+    /// @param fromPledge This is the Id from which value is being transferred.
+    /// @param toPledge This is the Id that value is being transferred to.
+    /// @param amount The amount of value that is being transferred.
     function callPlugins(
         bool before,
         uint64 fromPledge,
@@ -1580,7 +1731,11 @@ contract LiquidPledgingMock is LiquidPledging {
     /// @dev `LiquidPledgingMock` creates a standard `LiquidPledging`
     ///  instance and sets the mocked time to the current blocktime.
     /// @param _vault The vault where ETH backing this pledge is stored    
-    function LiquidPledgingMock(address _vault) LiquidPledging(_vault) {
+    function LiquidPledgingMock(
+        address _vault,
+        address _escapeHatchCaller,
+        address _escapeHatchDestination
+    ) LiquidPledging(_vault, _escapeHatchCaller, _escapeHatchDestination) {
         mock_time = now;
     }
 
