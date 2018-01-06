@@ -28,10 +28,12 @@ pragma solidity ^0.4.11;
 ///  to allow for an optional escapeHatch to be implemented in case of issues;
 ///  future versions of this contract will be enabled for tokens
 import "giveth-common-contracts/contracts/Escapable.sol";
+import "giveth-common-contracts/contracts/ERC20.sol";
 
 /// @dev `LiquidPledging` is a basic interface to allow the `LPVault` contract
 ///  to confirm and cancel payments in the `LiquidPledging` contract.
 contract LiquidPledging {
+    function token() public returns(address);
     function confirmPayment(uint64 idPledge, uint amount) public;
     function cancelPayment(uint64 idPledge, uint amount) public;
 }
@@ -73,10 +75,6 @@ contract LPVault is Escapable {
         require(msg.sender == address(liquidPledging));
         _;
     }
-
-    /// @dev The fall back function allows ETH to be deposited into the LPVault
-    ///  through a simple send
-    function () public payable {}
 
     /// @notice `onlyOwner` used to attach a specific liquidPledging instance
     ///  to this LPvault; keep in mind that once a liquidPledging contract is 
@@ -147,7 +145,8 @@ contract LPVault is Escapable {
         p.state = PaymentStatus.Paid;
         liquidPledging.confirmPayment(uint64(p.ref), p.amount);
 
-        p.dest.transfer(p.amount);  // Transfers ETH denominated in wei
+        ERC20 token = ERC20(liquidPledging.token());
+        require(token.transfer(p.dest, p.amount)); // Transfers token to dest
 
         ConfirmPayment(_idPayment, p.ref);
     }

@@ -32,8 +32,9 @@ contract LiquidPledgingMock is LiquidPledging {
     function LiquidPledgingMock(
         address _vault,
         address _escapeHatchCaller,
-        address _escapeHatchDestination
-    ) LiquidPledging(_vault, _escapeHatchCaller, _escapeHatchDestination) {
+        address _escapeHatchDestination,
+        ERC20 _token
+    ) LiquidPledging(_vault, _escapeHatchCaller, _escapeHatchDestination, _token) {
         mock_time = now;
     }
 

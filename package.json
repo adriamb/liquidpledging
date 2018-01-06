@@ -1,6 +1,6 @@
 {
-  "name": "giveth-liquidpledging",
-  "version": "0.0.10",
+  "name": "giveth-liquidpledging-token",
+  "version": "0.0.1",
   "description": "Liquid Pledging Smart Contract",
   "main": "index.js",
   "directories": {

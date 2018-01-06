@@ -40,32 +40,45 @@ contract LiquidPledging is LiquidPledgingBase {
     function LiquidPledging(
         address _vault,
         address _escapeHatchCaller,
-        address _escapeHatchDestination
-    ) LiquidPledgingBase(_vault, _escapeHatchCaller, _escapeHatchDestination) {
+        address _escapeHatchDestination,
+        ERC20 _token
+    ) LiquidPledgingBase(_vault, _escapeHatchCaller, _escapeHatchDestination, _token) {
 
     }
 
     /// @notice This is how value enters the system and how pledges are created;
-    ///  the ether is sent to the vault, an pledge for the Giver is created (or
-    ///  found), the amount of ETH donated in wei is added to the `amount` in
+    ///  the tokens are sent to the vault, a pledge for the Giver is created (or
+    ///  found), the amount of Tokens donated is added to the `amount` in
     ///  the Giver's Pledge, and an LP transfer is done to the idReceiver for
     ///  the full amount
-    /// @param idGiver The id of the Giver donating; if 0, a new id is created
-    /// @param idReceiver The Admin receiving the donation; can be any Admin:
+    /// @param _data first 8 bytes are the the id of the Giver donating; if 0, a new id is created
+    ///  the next 8 bytes are the Admin receiving the donation; can be any Admin:
     ///  the Giver themselves, another Giver, a Delegate or a Project
-    function donate(uint64 idGiver, uint64 idReceiver) payable {
-        if (idGiver == 0) {
 
-            // default to a 3 day (259200 seconds) commitTime
-            idGiver = addGiver("", "", 259200, ILiquidPledgingPlugin(0x0));
+    function receiveApproval(
+        address from,
+        uint256 _amount,
+        address _token,
+        bytes _data
+    ) public
+    {
+        uint64 idGiver;
+        uint64 idReceiver;
+        assembly {
+            idGiver := mload(add(_data, 0x8)) // first 8 bytes of _data is the idGiver
+            idReceiver := mload(add(add(_data, 0x8), 0x8)) // next 8 bytes of _data is the idReceiver
+        }
+
+        if (idGiver == 0) {
+            idGiver = addGiver(from, "", "", 259200, ILiquidPledgingPlugin(0x0));
         }
 
         PledgeAdmin storage sender = findAdmin(idGiver);
-        checkAdminOwner(sender);
+        require(from == sender.addr);
         require(sender.adminType == PledgeAdminType.Giver);
-        uint amount = msg.value;
-        require(amount > 0);
-        vault.transfer(amount); // Sends the `msg.value` (in wei) to the `vault`
+        require(_amount > 0);
+        require(token.transferFrom(from, address(vault), _amount)); // transfer the token to the `vault`
+
         uint64 idPledge = findOrCreatePledge(
             idGiver,
             new uint64[](0), // Creates empty array for delegationChain
@@ -77,14 +90,14 @@ contract LiquidPledging is LiquidPledgingBase {
 
 
         Pledge storage nTo = findPledge(idPledge);
-        nTo.amount += amount;
+        nTo.amount += _amount;
 
-        Transfer(0, idPledge, amount); // An event
+        Transfer(0, idPledge, _amount); // An event
 
-        transfer(idGiver, idPledge, amount, idReceiver); // LP accounting
+        transfer(idGiver, idPledge, _amount, idReceiver, sender);
     }
 
-    /// @notice Transfers amounts between pledges for internal accounting 
+    /// @notice Transfers amounts between pledges for internal accounting
     /// @param idSender Id of the Admin that is transferring the amount from
     ///  Pledge to Pledge; this admin must have permissions to move the value
     /// @param idPledge Id of the pledge that's moving the value
@@ -101,12 +114,22 @@ contract LiquidPledging is LiquidPledgingBase {
     ){
 
         idPledge = normalizePledge(idPledge);
+        PledgeAdmin storage sender = findAdmin(idSender);
+        checkAdminOwner(sender);
 
+        transfer(idSender, idPledge, amount, idReceiver, sender);
+    }
+
+    function transfer(
+        uint64 idSender,
+        uint64 idPledge,
+        uint amount,
+        uint64 idReceiver,
+        PledgeAdmin sender
+    ) internal
+    {
         Pledge storage p = findPledge(idPledge);
         PledgeAdmin storage receiver = findAdmin(idReceiver);
-        PledgeAdmin storage sender = findAdmin(idSender);
-
-        checkAdminOwner(sender);
         require(p.pledgeState == PledgeState.Pledged);
 
         // If the sender is the owner of the Pledge
@@ -273,7 +296,7 @@ contract LiquidPledging is LiquidPledgingBase {
     function cancelPayment(uint64 idPledge, uint amount) onlyVault {
         Pledge storage p = findPledge(idPledge);
 
-        require(p.pledgeState == PledgeState.Paying); //TODO change to revert????????????????????????????
+        require(p.pledgeState == PledgeState.Paying);
 
         // When a payment is canceled, never is assigned to a project.
         uint64 oldPledge = findOrCreatePledge(

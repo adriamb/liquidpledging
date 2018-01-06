@@ -20,6 +20,7 @@ pragma solidity ^0.4.11;
 
 import "./ILiquidPledgingPlugin.sol";
 import "giveth-common-contracts/contracts/Escapable.sol";
+import "giveth-common-contracts/contracts/ERC20.sol";
 
 /// @dev This is an interface for `LPVault` which serves as a secure storage for
 ///  the ETH that backs the Pledges, only after `LiquidPledging` authorizes
@@ -72,6 +73,7 @@ contract LiquidPledgingBase is Escapable {
     Pledge[] pledges;
     PledgeAdmin[] admins; //The list of pledgeAdmins 0 means there is no admin
     LPVault public vault;
+    ERC20 public token; // The current token represented by pledges
 
     /// @dev this mapping allows you to search for a specific pledge's 
     ///  index number by the hash of that pledge
@@ -102,11 +104,13 @@ contract LiquidPledgingBase is Escapable {
     function LiquidPledgingBase(
         address _vault,
         address _escapeHatchCaller,
-        address _escapeHatchDestination
+        address _escapeHatchDestination,
+        ERC20 _token
     ) Escapable(_escapeHatchCaller, _escapeHatchDestination) public {
         admins.length = 1; // we reserve the 0 admin
         pledges.length = 1; // we reserve the 0 pledge
         vault = LPVault(_vault); // Assigns the specified vault
+        token = _token;
     }
 
 
@@ -142,6 +146,32 @@ contract LiquidPledgingBase is Escapable {
             0,
             false,
             plugin));
+
+        GiverAdded(idGiver);
+    }
+
+    /// helper function for receiveApproval
+    function addGiver(
+        address addr,
+        string name,
+        string url,
+        uint64 commitTime,
+        ILiquidPledgingPlugin plugin
+    ) internal returns (uint64 idGiver) {
+
+        require(isValidPlugin(plugin)); // Plugin check
+
+        idGiver = uint64(admins.length);
+
+        admins.push(PledgeAdmin(
+                PledgeAdminType.Giver,
+                addr,
+                name,
+                url,
+                commitTime,
+                0,
+                false,
+                plugin));
 
         GiverAdded(idGiver);
     }
@@ -593,5 +623,17 @@ contract LiquidPledgingBase is Escapable {
             extcodecopy(addr, add(o_code, 0x20), 0, size)
         }
         return keccak256(o_code);
+    }
+
+///////////////////////////
+// Token Methods
+///////////////////////////
+
+    /// Note: when changing this token, the balances are expected
+    /// to be carried over from the currentToken.
+    /// Ex. a cloned MiniMe Token
+    function changeToken(ERC20 _newToken) public onlyOwner {
+        require(address(_newToken) != 0x0);
+        token = _newToken;
     }
 }
